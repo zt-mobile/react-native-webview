@@ -4,10 +4,13 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.DownloadManager;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.Manifest;
 import android.net.http.SslError;
@@ -40,11 +43,14 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
 import androidx.core.util.Pair;
+import android.provider.MediaStore;
+import android.util.Base64;
 
 import com.facebook.common.logging.FLog;
 import com.facebook.react.modules.core.PermissionAwareActivity;
@@ -85,6 +91,13 @@ import com.reactnativecommunity.webview.events.TopRenderProcessGoneEvent;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -210,6 +223,58 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
         webView.setIgnoreErrFailedForThisURL(url);
 
         RNCWebViewModule module = getModule(reactContext);
+
+        if (url.startsWith("data:")) {
+          final String pureBase64Encoded = url.substring(url.indexOf(",")  + 1);
+          byte[] imageBytes = Base64.decode(pureBase64Encoded, Base64.DEFAULT);
+          InputStream is = new ByteArrayInputStream(imageBytes);
+          Bitmap bitmap= BitmapFactory.decodeStream(is);
+
+          long unixTime = System.currentTimeMillis() / 1000L;
+          OutputStream fos = null;
+
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentResolver resolver = reactContext.getContentResolver();
+            ContentValues contentValues = new ContentValues();
+            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, String.format("qrCode_%d", unixTime));
+            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/png");
+            contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/" + "BK8");
+            Uri imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues);
+            try {
+              fos = resolver.openOutputStream(imageUri);
+            } catch (FileNotFoundException e) {
+              e.printStackTrace();
+            }
+          } else {
+            String imagesDir = Environment.getExternalStoragePublicDirectory(
+              Environment.DIRECTORY_DCIM).toString() + File.separator + "BK8";
+
+            File file = new File(imagesDir);
+
+            if (!file.exists()) {
+              file.mkdir();
+            }
+
+            File image = new File(imagesDir, String.format("qrCode_%d.png", unixTime));
+            try {
+              fos = new FileOutputStream(image);
+            } catch (FileNotFoundException e) {
+              e.printStackTrace();
+            }
+          }
+
+          try {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+            fos.flush();
+            fos.close();
+
+            Toast.makeText(reactContext, "QR code saved to photo gallery", Toast.LENGTH_LONG).show();
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          return;
+        }
 
         DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
 
@@ -787,6 +852,14 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
 
           mReactContext.removeLifecycleEventListener(this);
         }
+
+        @Override
+        public void onCloseWindow(WebView webView) {
+          super.onCloseWindow(webView);
+          Log.d("CLOSEWEBVIEW", "Webview is trying to close");
+          webView.setVisibility(View.GONE);
+          webView.loadUrl("");
+        }
       };
       webView.setWebChromeClient(mWebChromeClient);
     } else {
@@ -797,6 +870,14 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
         @Override
         public Bitmap getDefaultVideoPoster() {
           return Bitmap.createBitmap(50, 50, Bitmap.Config.ARGB_8888);
+        }
+
+        @Override
+        public void onCloseWindow(WebView webView) {
+          super.onCloseWindow(webView);
+          Log.d("CLOSEWEBVIEW", "Webview is trying to close");
+          webView.setVisibility(View.GONE);
+          webView.loadUrl("");
         }
       };
       webView.setWebChromeClient(mWebChromeClient);
